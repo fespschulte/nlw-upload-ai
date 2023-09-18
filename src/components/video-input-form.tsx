@@ -6,9 +6,25 @@ import { Button } from "./ui/button";
 import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
 import { getFFmpeg } from "@/lib/ffmpeg";
 import { fetchFile } from "@ffmpeg/util";
+import { api } from "@/lib/axios";
 
-export function VideoInputForm() {
+type Status = "waiting" | "converting" | "uploading" | "generating" | "success";
+
+interface VideoInputFormProps {
+  onVideoUploaded: (id: string) => void;
+}
+
+const statusMessages = {
+  converting: "Convertendo...",
+  uploading: "Carregando...",
+  generating: "Transcrevendo...",
+  success: "Sucesso!",
+};
+
+export function VideoInputForm(props: VideoInputFormProps) {
   const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [status, setStatus] = useState<Status>("waiting");
+
   const promptInputRef = useRef<HTMLTextAreaElement>(null);
 
   function handleFileSelected(event: ChangeEvent<HTMLInputElement>) {
@@ -29,9 +45,7 @@ export function VideoInputForm() {
     const ffmpeg = await getFFmpeg();
 
     await ffmpeg.writeFile("input.mp4", await fetchFile(video));
-    // ffmpeg.on("log", (log) => {
-    //   console.log(log);
-    // });
+
     ffmpeg.on("progress", (progress) => {
       console.log("Convert progress:" + Math.round(progress.progress * 100));
     });
@@ -62,17 +76,38 @@ export function VideoInputForm() {
 
   async function handleUploadVideo(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     const prompt = promptInputRef.current?.value;
 
     if (!videoFile) {
       return;
     }
 
+    setStatus("converting");
+
     // converter o vídeo em áudio
 
     const audioFile = await convertVideotoAudio(videoFile);
 
-    console.log(audioFile);
+    const data = new FormData();
+
+    data.append("file", audioFile);
+
+    setStatus("uploading");
+
+    const response = await api.post("/videos", data);
+
+    console.log(response.data);
+
+    const videoId = response.data.video.id;
+
+    setStatus("generating");
+
+    await api.post(`videos/${videoId}/transcription`, { prompt });
+
+    setStatus("success");
+
+    props.onVideoUploaded(videoId);
   }
 
   const previewURL = useMemo(() => {
@@ -113,13 +148,25 @@ export function VideoInputForm() {
         <Label htmlFor="transcription_prompt">Prompt de transcrição</Label>
         <Textarea
           ref={promptInputRef}
+          disabled={status != "waiting"}
           id="transcription_prompt"
           className="h-20 leading-relaxed resize-none"
           placeholder="Inclua palavras-chave mencionadas no vídeo separadas por vírgula (,)"
         />
       </div>
-      <Button type="submit" className="w-full">
-        Carregar vídeo <Upload className="ml-2 w-4 h-4"></Upload>
+      <Button
+        type="submit"
+        className="w-full data-[success=true]:bg-emerald-400"
+        disabled={status != "waiting"}
+        data-success={status === "success"}
+      >
+        {status === "waiting" ? (
+          <>
+            Carregar vídeo <Upload className="ml-2 w-4 h-4"></Upload>
+          </>
+        ) : (
+          statusMessages[status]
+        )}
       </Button>
     </form>
   );
